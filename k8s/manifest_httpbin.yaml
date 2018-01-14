@@ -1,0 +1,286 @@
+apiVersion: v1
+items:
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    labels:
+      app: httpbin
+      run: httpbin
+    name: httpbin
+    namespace: myproject
+  spec:
+    replicas: 1
+    selector:
+      run: httpbin
+    strategy:
+      activeDeadlineSeconds: 21600
+      resources: {}
+      rollingParams:
+        intervalSeconds: 1
+        maxSurge: 25%
+        maxUnavailable: 25%
+        timeoutSeconds: 600
+        updatePeriodSeconds: 1
+      type: Rolling
+    template:
+      metadata:
+        creationTimestamp: null
+        labels:
+          app: httpbin
+          run: httpbin
+      spec:
+        containers:
+        - image: citizenstig/httpbin
+          imagePullPolicy: Always
+          name: httpbin
+          ports:
+          - containerPort: 8000
+            protocol: TCP
+          resources: {}
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+        - env:
+          - name: SERVICE_CLUSTER_NAME
+            value: httpbin
+          image: 172.30.1.1:5000/myproject/envoy
+          imagePullPolicy: Always
+          name: envoy-sidecar
+          ports:
+          - containerPort: 15001
+            protocol: TCP
+          - containerPort: 15000
+            protocol: TCP
+          - containerPort: 8100
+            protocol: TCP
+          resources: {}
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+          - mountPath: /config
+            name: volume-3f552
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        terminationGracePeriodSeconds: 30
+        volumes:
+        - configMap:
+            defaultMode: 420
+            name: httpbin-envoy-config
+          name: volume-3f552
+    test: false
+    triggers:
+    - type: ConfigChange
+  status:
+    availableReplicas: 1
+    conditions:
+    - lastTransitionTime: 2018-01-13T15:19:24Z
+      lastUpdateTime: 2018-01-13T15:19:25Z
+      message: replication controller "httpbin-4" successfully rolled out
+      reason: NewReplicationControllerAvailable
+      status: "True"
+      type: Progressing
+    - lastTransitionTime: 2018-01-14T12:08:30Z
+      lastUpdateTime: 2018-01-14T12:08:30Z
+      message: Deployment config has minimum availability.
+      status: "True"
+      type: Available
+    details:
+      causes:
+      - type: ConfigChange
+      message: config change
+    latestVersion: 4
+    observedGeneration: 8
+    readyReplicas: 1
+    replicas: 1
+    unavailableReplicas: 0
+    updatedReplicas: 1
+
+
+
+- apiVersion: v1
+  kind: Service
+  metadata:
+    labels:
+      app: httpbin
+      run: httpbin
+    name: httpbin
+    namespace: myproject
+  spec:
+    ports:
+    - name: envoy-admin
+      port: 15000
+      protocol: TCP
+      targetPort: 15000
+    - name: httpbin
+      port: 8000
+      protocol: TCP
+      targetPort: 8100
+    selector:
+      run: httpbin
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+
+
+
+- apiVersion: v1
+  kind: Route
+  metadata:
+    labels:
+      app: httpbin
+    name: httpbin
+    namespace: myproject
+  spec:
+    host: httpbin-myproject.192.168.99.100.nip.io
+    port:
+      targetPort: httpbin
+    to:
+      kind: Service
+      name: httpbin
+      weight: 100
+    wildcardPolicy: None
+  status:
+    ingress:
+    - conditions:
+      - lastTransitionTime: 2018-01-13T14:54:07Z
+        status: "True"
+        type: Admitted
+      host: httpbin-myproject.192.168.99.100.nip.io
+      routerName: router
+      wildcardPolicy: None
+
+
+
+- apiVersion: v1
+  kind: Route
+  metadata:
+    labels:
+      app: httpbin
+    name: httpbin-envoy-admin
+    namespace: myproject
+  spec:
+    host: httpbin-envoy-admin-myproject.192.168.99.100.nip.io
+    port:
+      targetPort: envoy-admin
+    to:
+      kind: Service
+      name: httpbin
+      weight: 100
+    wildcardPolicy: None
+  status:
+    ingress:
+    - conditions:
+      - lastTransitionTime: 2018-01-13T14:59:04Z
+        status: "True"
+        type: Admitted
+      host: httpbin-envoy-admin-myproject.192.168.99.100.nip.io
+      routerName: router
+      wildcardPolicy: None
+
+
+
+- apiVersion: v1
+  data:
+    envoy.json: |
+      {
+        "listeners": [
+          {
+            "address": "tcp://0.0.0.0:8100",
+            "filters": [
+              {
+                "type": "read",
+                "name": "http_connection_manager",
+                "config": {
+                  "codec_type": "auto",
+                  "stat_prefix": "ingress_http",
+                  "access_log": [
+                    {
+                      "path": "/tmp/envoy-ingress-traffic"
+                    }
+                  ],
+                  "generate_request_id": true,
+                  "tracing": {
+                    "operation_name": "ingress"
+                  },
+                  "route_config": {
+                    "virtual_hosts": [
+                      {
+                        "name": "service_in",
+                        "domains": ["*"],
+                        "routes": [
+                          {
+                            "timeout_ms": 0,
+                            "prefix": "/",
+                            "auto_host_rewrite": true,
+                            "cluster": "local_service"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "filters": [
+                    {
+                      "type": "decoder",
+                      "name": "router",
+                      "config": {}
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "admin": {
+          "access_log_path": "/tmp/envoy-admin",
+          "address": "tcp://0.0.0.0:15000"
+        },
+        "tracing": {
+          "http": {
+            "driver": {
+              "type": "zipkin",
+              "config": {
+                "collector_cluster": "zipkin",
+                "collector_endpoint": "/api/v1/spans"
+              }
+            }
+          }
+        },
+        "cluster_manager": {
+          "clusters": [
+            {
+              "name": "local_service",
+              "connect_timeout_ms": 250,
+              "type": "strict_dns",
+              "lb_type": "round_robin",
+              "hosts": [
+                {
+                  "url": "tcp://127.0.0.1:8000"
+                }
+              ]
+            },
+            {
+              "name": "zipkin",
+              "connect_timeout_ms": 1000,
+              "type": "strict_dns",
+              "lb_type": "round_robin",
+              "hosts": [
+                {
+                  "url": "tcp://zipkin:9411"
+                }
+              ]
+            }
+          ]
+        }
+      }
+  kind: ConfigMap
+  metadata:
+    labels:
+      app: httpbin
+    name: httpbin-envoy-config
+    namespace: myproject
+kind: List
+metadata: {}
+resourceVersion: ""
+selfLink: ""

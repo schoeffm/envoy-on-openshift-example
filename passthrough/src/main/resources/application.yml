@@ -1,0 +1,21 @@
+zuul:
+  routes:
+    api:
+      url: http://localhost:15001
+
+ribbon:
+  eureka:
+    enabled: false
+
+server:
+  port: 8080
+
+management:
+  security:
+    enabled: false
+
+spring:
+  zipkin:
+    base-url: http://zipkin-myproject.192.168.99.100.nip.io
+    service:
+      name: passthrough-foobar

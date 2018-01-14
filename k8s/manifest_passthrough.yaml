@@ -1,0 +1,359 @@
+apiVersion: v1
+items:
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    generation: 29
+    labels:
+      app: passthrough
+      run: passthrough
+    name: passthrough
+    namespace: myproject
+  spec:
+    replicas: 1
+    selector:
+      run: passthrough
+    strategy:
+      activeDeadlineSeconds: 21600
+      resources: {}
+      rollingParams:
+        intervalSeconds: 1
+        maxSurge: 25%
+        maxUnavailable: 25%
+        timeoutSeconds: 600
+        updatePeriodSeconds: 1
+      type: Rolling
+    template:
+      metadata:
+        creationTimestamp: null
+        labels:
+          app: passthrough
+          run: passthrough
+      spec:
+        containers:
+        - env:
+          - name: ZUUL_ROUTES_API_URL
+            value: http://localhost:15001
+          image: 172.30.1.1:5000/myproject/passthrough
+          imagePullPolicy: Always
+          name: passthrough
+          ports:
+          - containerPort: 8080
+            protocol: TCP
+          resources: {}
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+        - env:
+          - name: SERVICE_CLUSTER_NAME
+            value: passthrough
+          image: 172.30.1.1:5000/myproject/envoy
+          imagePullPolicy: Always
+          name: envoy-sidecar
+          ports:
+          - containerPort: 15001
+            protocol: TCP
+          - containerPort: 15000
+            protocol: TCP
+          - containerPort: 8180
+            protocol: TCP
+          resources: {}
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+          - mountPath: /config
+            name: volume-n4n2h
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        terminationGracePeriodSeconds: 30
+        volumes:
+        - configMap:
+            defaultMode: 420
+            name: passthrough-envoy-config
+          name: volume-n4n2h
+    test: false
+    triggers:
+    - type: ConfigChange
+  status:
+    availableReplicas: 1
+    conditions:
+    - lastTransitionTime: 2018-01-14T12:08:32Z
+      lastUpdateTime: 2018-01-14T12:08:32Z
+      message: Deployment config has minimum availability.
+      status: "True"
+      type: Available
+    - lastTransitionTime: 2018-01-14T12:12:08Z
+      lastUpdateTime: 2018-01-14T12:12:10Z
+      message: replication controller "passthrough-17" successfully rolled out
+      reason: NewReplicationControllerAvailable
+      status: "True"
+      type: Progressing
+    details:
+      causes:
+      - type: ConfigChange
+      message: config change
+    latestVersion: 17
+    observedGeneration: 29
+    readyReplicas: 1
+    replicas: 1
+    unavailableReplicas: 0
+    updatedReplicas: 1
+
+
+
+- apiVersion: v1
+  kind: Service
+  metadata:
+    labels:
+      app: passthrough
+      run: passthrough
+    name: passthrough
+    namespace: myproject
+  spec:
+    ports:
+    - name: envoy-admin
+      port: 15000
+      protocol: TCP
+      targetPort: 15000
+    - name: passthrough
+      port: 8080
+      protocol: TCP
+      targetPort: 8180
+    selector:
+      run: passthrough
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+
+
+
+- apiVersion: v1
+  kind: Route
+  metadata:
+    labels:
+      app: passthrough
+    name: passthrough
+    namespace: myproject
+  spec:
+    host: passthrough-myproject.192.168.99.100.nip.io
+    port:
+      targetPort: passthrough
+    to:
+      kind: Service
+      name: passthrough
+      weight: 100
+    wildcardPolicy: None
+  status:
+    ingress:
+    - conditions:
+      - lastTransitionTime: 2018-01-13T14:41:35Z
+        status: "True"
+        type: Admitted
+      host: passthrough-myproject.192.168.99.100.nip.io
+      routerName: router
+      wildcardPolicy: None
+
+
+
+
+- apiVersion: v1
+  kind: Route
+  metadata:
+    labels:
+      app: passthrough
+    name: passthrough-envoy-admin
+    namespace: myproject
+  spec:
+    host: passthrough-envoy-admin-myproject.192.168.99.100.nip.io
+    port:
+      targetPort: envoy-admin
+    to:
+      kind: Service
+      name: passthrough
+      weight: 100
+    wildcardPolicy: None
+  status:
+    ingress:
+    - conditions:
+      - lastTransitionTime: 2018-01-13T13:17:57Z
+        status: "True"
+        type: Admitted
+      host: passthrough-envoy-admin-myproject.192.168.99.100.nip.io
+      routerName: router
+      wildcardPolicy: None
+
+
+
+- apiVersion: v1
+  data:
+    envoy.json: |
+      {
+        "listeners": [
+          {
+            "address": "tcp://0.0.0.0:8180",
+            "filters": [
+              {
+                "type": "read",
+                "name": "http_connection_manager",
+                "config": {
+                  "codec_type": "auto",
+                  "stat_prefix": "ingress_http",
+                  "access_log": [
+                    {
+                      "path": "/tmp/envoy-ingress-traffic"
+                    }
+                  ],
+                  "generate_request_id": true,
+                  "tracing": {
+                    "operation_name": "ingress"
+                  },
+                  "route_config": {
+                    "virtual_hosts": [
+                      {
+                        "name": "service_in",
+                        "domains": ["*"],
+                        "routes": [
+                          {
+                            "timeout_ms": 0,
+                            "prefix": "/",
+                            "auto_host_rewrite": true,
+                            "cluster": "local_service"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "filters": [
+                    {
+                      "type": "decoder",
+                      "name": "router",
+                      "config": {}
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "address": "tcp://0.0.0.0:15001",
+            "filters": [
+              {
+                "type": "read",
+                "name": "http_connection_manager",
+                "config": {
+                  "codec_type": "auto",
+                  "stat_prefix": "egress_http",
+                  "access_log": [
+                    {
+                      "path": "/tmp/envoy-traffic"
+                    }
+                  ],
+                  "generate_request_id": true,
+                  "tracing": {
+                    "operation_name": "egress"
+                  },
+                  "route_config": {
+                    "virtual_hosts": [
+                      {
+                        "name": "service",
+                        "domains": ["*"],
+                        "routes": [
+                          {
+                            "timeout_ms": 0,
+                            "prefix": "/",
+                            "auto_host_rewrite": true,
+                            "cluster": "httpbin_service"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "filters": [
+                    {
+                      "type": "decoder",
+                      "name": "router",
+                      "config": {}
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "admin": {
+          "access_log_path": "/tmp/envoy-admin",
+          "address": "tcp://0.0.0.0:15000"
+        },
+        "tracing": {
+          "http": {
+            "driver": {
+              "type": "zipkin",
+              "config": {
+                "collector_cluster": "zipkin",
+                "collector_endpoint": "/api/v1/spans"
+              }
+            }
+          }
+        },
+        "cluster_manager": {
+          "clusters": [
+            {
+              "name": "httpbin_service",
+              "connect_timeout_ms": 5000,
+              "type": "logical_dns",
+              "lb_type": "round_robin",
+              "hosts": [
+                {
+                  "url": "tcp://httpbin:8000"
+                }
+              ],
+              "circuit_breakers": {
+                "default": {
+                  "max_connections": 1,
+                  "max_pending_requests": 1,
+                  "max_retries": 3
+                }
+              },
+              "outlier_detection" : {
+                "consecutive_5xx": 5,
+                "max_ejection_percent": 100,
+                "interval_ms": 3000
+              }
+            },
+            {
+              "name": "local_service",
+              "connect_timeout_ms": 250,
+              "type": "strict_dns",
+              "lb_type": "round_robin",
+              "hosts": [
+                {
+                  "url": "tcp://127.0.0.1:8080"
+                }
+              ]
+            },
+            {
+              "name": "zipkin",
+              "connect_timeout_ms": 1000,
+              "type": "strict_dns",
+              "lb_type": "round_robin",
+              "hosts": [
+                {
+                  "url": "tcp://zipkin:9411"
+                }
+              ]
+            }
+          ]
+        }
+      }
+  kind: ConfigMap
+  metadata:
+    labels:
+      app: passthrough
+    name: passthrough-envoy-config
+    namespace: myproject
+kind: List
+metadata: {}
+resourceVersion: ""
+selfLink: ""
